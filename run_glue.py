@@ -171,7 +171,8 @@ def train(args, train_dataset, model, tokenizer):
             tr_loss += loss.item()
 
             #print('Params before: ', model.parameters())
-            aggregate_gradients_gather_scatter(rank, model)
+            #aggregate_gradients_gather_scatter(rank, model)
+            aggregate_gradients_allreduce(rank, model)
             #print('Params after: ', model.parameters())
 
             if (step + 1) % args.gradient_accumulation_steps == 0:
@@ -342,6 +343,12 @@ def aggregate_gradients_gather_scatter(rank, model):
         else:
             scatter_list = None
         dist.scatter(param.grad.data, scatter_list, src=0)
+
+def aggregate_gradients_allreduce(rank, model):
+    print('Rank {} node is reducing gradient...'.format(rank))
+    for param in model.parameters():
+        dist.all_reduce(param.grad.data, op=dist.ReduceOp.SUM)
+        param.grad.data /= dist.get_world_size()
 
 def cleanup():
     print('cleanup')
