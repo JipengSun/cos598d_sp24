@@ -81,6 +81,7 @@ def train(args, train_dataset, model, tokenizer):
     is_distributed = True
 
     if is_distributed:
+        args.train_batch_size = args.per_gpu_train_batch_size
         train_sampler = DistributedSampler(train_dataset)
         train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size)
     else:
