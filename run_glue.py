@@ -22,6 +22,7 @@ import glob
 import logging
 import os
 import random
+import time
 
 import numpy as np
 import torch
@@ -130,6 +131,15 @@ def train(args, train_dataset, model, tokenizer):
     for _ in train_iterator:
         epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable=args.local_rank not in [-1, 0])
         for step, batch in enumerate(epoch_iterator):
+
+            if step == 1:
+                tic = time.perf_counter()
+            
+            if step == 40:
+                toc = time.perf_counter()
+                avg_time = (toc - tic) / 40
+                print("Average time: ", avg_time)
+                
             model.train()
             batch = tuple(t.to(args.device) for t in batch)
             inputs = {'input_ids':      batch[0],
@@ -150,17 +160,17 @@ def train(args, train_dataset, model, tokenizer):
                 ##################################################
                 # TODO(cos598d): perform backward pass here
                 loss.backward()
-                for param in model.parameters():
-                    print(param.grad)
+                #for param in model.parameters():
+                    #print(param.grad)
                 
                 ##################################################
                 torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
 
             tr_loss += loss.item()
 
-            print('Params before: ', model.parameters())
+            #print('Params before: ', model.parameters())
             aggregate_gradients_gather_scatter(rank, model)
-            print('Params after: ', model.parameters())
+            #print('Params after: ', model.parameters())
 
             if (step + 1) % args.gradient_accumulation_steps == 0:
                 scheduler.step()  # Update learning rate schedule
