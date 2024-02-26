@@ -134,10 +134,12 @@ def train(args, train_dataset, model, tokenizer):
 
             if step == 1:
                 tic = time.perf_counter()
+                print('Start time: ', tic)
             
-            if step == 40:
+            if step == 9:
                 toc = time.perf_counter()
-                avg_time = (toc - tic) / 40
+                print('End time: ', toc)
+                avg_time = (toc - tic) / 8
                 print("Average time: ", avg_time)
 
             model.train()
@@ -332,8 +334,8 @@ def aggregate_gradients_gather_scatter(rank, model):
             dist.gather(param.grad.data, gather_list=gathered_list, dst=0)
 
     # Scatter the averaged gradients back to all processes
+    print('Rank {} node is scattering gradient'.format(rank))
     for param, gathered_grad in zip(model.parameters(), gathered_gradients):
-        print('Rank {} node is scattering gradient'.format(rank))
         if rank == 0:
             scatter_list=[gathered_grad] * dist.get_world_size()
             #print('scatter_list: ', scatter_list)
