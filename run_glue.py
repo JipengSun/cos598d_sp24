@@ -28,6 +28,7 @@ import torch
 from torch.utils.data import (DataLoader, RandomSampler, SequentialSampler,
                               TensorDataset)
 from torch.utils.data.distributed import DistributedSampler
+import torch.distributed as dist
 from tqdm import tqdm, trange
 
 # import a previous version of the HuggingFace Transformers package
@@ -66,6 +67,12 @@ def set_seed(args):
     torch.backends.cudnn.benchmark = False
     torch.cuda.manual_seed_all(args.seed)
 
+def setup(rank, world_size):
+    # Initialize the process group
+    dist.init_process_group("gloo", rank=rank, world_size=world_size) # Use "nccl" for GPU
+
+# Example initialization
+# setup(rank=my_rank, world_size=4) # my_rank is the rank of the current process
 
 def train(args, train_dataset, model, tokenizer):
     """ Train the model """
@@ -132,6 +139,9 @@ def train(args, train_dataset, model, tokenizer):
             else:
                 ##################################################
                 # TODO(cos598d): perform backward pass here
+                loss.backward()
+                for param in model.parameters():
+                    print(param.grad)
                 
                 ##################################################
                 torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
@@ -141,7 +151,7 @@ def train(args, train_dataset, model, tokenizer):
                 scheduler.step()  # Update learning rate schedule
                 ##################################################
                 # TODO(cos598d): perform a single optimization step (parameter update) by invoking the optimizer
-                
+                optimizer.step()
                 ##################################################
                 model.zero_grad()
                 global_step += 1
@@ -155,7 +165,7 @@ def train(args, train_dataset, model, tokenizer):
         
         ##################################################
         # TODO(cos598d): call evaluate() here to get the model performance after every epoch.
-
+        evaluate(args, model, tokenizer, prefix="")
         ##################################################
 
     return global_step, tr_loss / global_step
@@ -277,15 +287,39 @@ def load_and_cache_examples(args, task, tokenizer, evaluate=False):
     return dataset
 
 
+def aggregate_gradients(rank, model):
+    # Placeholder to gather gradients
+    gathered_gradients = [torch.zeros_like(param.grad) for param in model.parameters()]
+    
+    # Gather gradients from all processes
+    for param, gathered_grad in zip(model.parameters(), gathered_gradients):
+        gathered_list = [torch.zeros_like(param.grad) for _ in range(dist.get_world_size())]
+        dist.gather(param.grad.data, gather_list=gathered_list, dst=0)
+        
+        # Only the root process (rank 0) computes the mean
+        if rank == 0:
+            mean_grad = torch.mean(torch.stack(gathered_list), 0)
+            gathered_grad.data = mean_grad
+
+    # Scatter the averaged gradients back to all processes
+    for param, gathered_grad in zip(model.parameters(), gathered_gradients):
+        dist.scatter(param.grad.data, scatter_list=[gathered_grad] * dist.get_world_size(), src=0)
+
+def cleanup():
+    print('cleanup')
+    dist.destroy_process_group()
+
 def main():
     parser = argparse.ArgumentParser()
+
+    print(parser)
 
     ## Required parameters
     parser.add_argument("--data_dir", default=None, type=str, required=True,
                         help="The input data dir. Should contain the .tsv files (or other data files) for the task.")
-    parser.add_argument("--model_type", default=None, type=str, required=True,
+    parser.add_argument("--model_type", default='bert', type=str, required=True,
                         help="Model type selected in the list: " + ", ".join(MODEL_CLASSES.keys()))
-    parser.add_argument("--model_name_or_path", default=None, type=str, required=True,
+    parser.add_argument("--model_name_or_path", default='bert-base-cased', type=str, required=True,
                         help="Path to pre-trained model or shortcut name selected in the list: " + ", ".join(ALL_MODELS))
     parser.add_argument("--task_name", default=None, type=str, required=True,
                         help="The name of the task to train selected in the list: " + ", ".join(processors.keys()))
@@ -346,7 +380,7 @@ def main():
     parser.add_argument('--fp16_opt_level', type=str, default='O1',
                         help="For fp16: Apex AMP optimization level selected in ['O0', 'O1', 'O2', and 'O3']."
                              "See details at https://nvidia.github.io/apex/amp.html")
-    parser.add_argument("--local_rank", type=int, default=-1,
+    parser.add_argument("--local-rank", type=int, default=-1,
                         help="For distributed training: local_rank. If single-node training, local_rank defaults to -1.")
     args = parser.parse_args()
 
@@ -356,6 +390,14 @@ def main():
     # set up (distributed) training
     args.device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
     args.n_gpu = torch.cuda.device_count()
+
+    print('args.local_rank: ' , args.local_rank, type(args.local_rank))
+    args.local_rank = int(args.local_rank)
+
+    world_size = 4
+    rank = args.local_rank
+    setup(rank, world_size)
+
 
     # Setup logging
     logging.basicConfig(format = '%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
@@ -389,6 +431,7 @@ def main():
     # TODO(cos598d): load the model using from_pretrained. Remember to pass in `config` as an argument.
     # If you pass in args.model_name_or_path (e.g. "bert-base-cased"), the model weights file will be downloaded from HuggingFace.
 
+    model = model_class.from_pretrained(args.model_name_or_path)
     ##################################################
 
     if args.local_rank == 0:
@@ -407,6 +450,8 @@ def main():
 
     # Evaluation
     evaluate(args, model, tokenizer, prefix="")
+    cleanup()
 
 if __name__ == "__main__":
+
     main()
