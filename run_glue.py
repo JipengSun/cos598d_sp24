@@ -78,9 +78,15 @@ def setup(rank, world_size):
 def train(args, train_dataset, model, tokenizer):
     """ Train the model """
 
-    args.train_batch_size = args.per_gpu_train_batch_size
-    train_sampler = RandomSampler(train_dataset)
-    train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size)
+    is_distributed = True
+
+    if is_distributed:
+        train_sampler = DistributedSampler(train_dataset)
+        train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size)
+    else:
+        args.train_batch_size = args.per_gpu_train_batch_size
+        train_sampler = RandomSampler(train_dataset)
+        train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size)
     
     rank = args.local_rank
 
@@ -151,7 +157,9 @@ def train(args, train_dataset, model, tokenizer):
 
             tr_loss += loss.item()
 
+            print('Params before: ', model.parameters())
             aggregate_gradients_gather_scatter(rank, model)
+            print('Params after: ', model.parameters())
 
             if (step + 1) % args.gradient_accumulation_steps == 0:
                 scheduler.step()  # Update learning rate schedule
@@ -232,6 +240,8 @@ def evaluate(args, model, tokenizer, prefix=""):
         results.update(result)
 
         output_eval_file = os.path.join(eval_output_dir, "eval_results.txt")
+        # Create the directory if it does not exist
+        os.makedirs(eval_output_dir, exist_ok=True)
         with open(output_eval_file, "w") as writer:
             logger.info("***** Eval results {} *****".format(prefix))
             for key in sorted(result.keys()):
@@ -314,7 +324,8 @@ def aggregate_gradients_gather_scatter(rank, model):
     for param, gathered_grad in zip(model.parameters(), gathered_gradients):
         print('Rank {} node is scattering gradient'.format(rank))
         if rank == 0:
-            scatter_list = scatter_list=[gathered_grad] * dist.get_world_size()
+            scatter_list=[gathered_grad] * dist.get_world_size()
+            print('scatter_list: ', scatter_list)
         else:
             scatter_list = None
         dist.scatter(param.grad.data, scatter_list, src=0)
