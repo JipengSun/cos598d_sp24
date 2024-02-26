@@ -139,7 +139,7 @@ def train(args, train_dataset, model, tokenizer):
                 toc = time.perf_counter()
                 avg_time = (toc - tic) / 40
                 print("Average time: ", avg_time)
-                
+
             model.train()
             batch = tuple(t.to(args.device) for t in batch)
             inputs = {'input_ids':      batch[0],
@@ -336,7 +336,7 @@ def aggregate_gradients_gather_scatter(rank, model):
         print('Rank {} node is scattering gradient'.format(rank))
         if rank == 0:
             scatter_list=[gathered_grad] * dist.get_world_size()
-            print('scatter_list: ', scatter_list)
+            #print('scatter_list: ', scatter_list)
         else:
             scatter_list = None
         dist.scatter(param.grad.data, scatter_list, src=0)
