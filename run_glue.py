@@ -486,7 +486,7 @@ def main():
 
     model.to(args.device)
     
-    ddp_model = DDP(model, device_ids=[rank])
+    ddp_model = DDP(model)
     
     logger.info("Training/evaluation parameters %s", args)
 
