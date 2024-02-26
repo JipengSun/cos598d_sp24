@@ -300,50 +300,24 @@ def aggregate_gradients_gather_scatter(rank, model):
     
     # Gather gradients from all processes
     for param, gathered_grad in zip(model.parameters(), gathered_gradients):
-        gathered_list = [torch.zeros_like(param.grad) for _ in range(dist.get_world_size())]
-        dist.gather(param.grad.data, gather_list=gathered_list, dst=0)
-        
         # Only the root process (rank 0) computes the mean
         if rank == 0:
+            gathered_list = [torch.zeros_like(param.grad) for _ in range(dist.get_world_size())]
+            dist.gather(param.grad.data, gather_list=gathered_list, dst=0)
             mean_grad = torch.mean(torch.stack(gathered_list), 0)
             gathered_grad.data = mean_grad
+        else:
+            gathered_list = None
+            dist.gather(param.grad.data, gather_list=gathered_list, dst=0)
 
     # Scatter the averaged gradients back to all processes
     for param, gathered_grad in zip(model.parameters(), gathered_gradients):
         print('Rank {} node is scattering gradient'.format(rank))
-        dist.scatter(param.grad.data, scatter_list=[gathered_grad] * dist.get_world_size(), src=0)
-
-def gather_gradients(params):
-    """
-    Gather gradients from all processes and return the mean gradients on rank 0.
-    Each process should call this function.
-    """
-    world_size = dist.get_world_size()
-    for param in params:
-        # All processes contribute their gradients for averaging
-        gathered_gradients = [torch.zeros_like(param.grad) for _ in range(world_size)]
-        dist.all_gather(gathered_gradients, param.grad)
-        
-        # Only rank 0 will average the gradients
-        if dist.get_rank() == 0:
-            mean_grad = torch.mean(torch.stack(gathered_gradients), dim=0)
-            param.grad = mean_grad
-
-def scatter_gradients(params):
-    """
-    Scatter the mean gradients from rank 0 to all processes.
-    """
-    for param in params:
-        # Broadcast the mean gradient from rank 0 to all processes
-        dist.broadcast(param.grad, src=0)
-
-def synchronize_gradients(model):
-    """
-    Perform gradient synchronization (gather and scatter) across all workers.
-    """
-    gather_gradients(model.parameters())
-    if dist.get_rank() == 0:
-        scatter_gradients(model.parameters())
+        if rank == 0:
+            scatter_list = scatter_list=[gathered_grad] * dist.get_world_size()
+        else:
+            scatter_list = None
+        dist.scatter(param.grad.data, scatter_list, src=0)
 
 def cleanup():
     print('cleanup')
