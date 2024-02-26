@@ -81,6 +81,8 @@ def train(args, train_dataset, model, tokenizer):
     args.train_batch_size = args.per_gpu_train_batch_size
     train_sampler = RandomSampler(train_dataset)
     train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size)
+    
+    rank = args.local_rank
 
     if args.max_steps > 0:
         t_total = args.max_steps
@@ -148,6 +150,9 @@ def train(args, train_dataset, model, tokenizer):
                 torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
 
             tr_loss += loss.item()
+
+            aggregate_gradients_gather_scatter(rank, model)
+
             if (step + 1) % args.gradient_accumulation_steps == 0:
                 scheduler.step()  # Update learning rate schedule
                 ##################################################
@@ -288,7 +293,8 @@ def load_and_cache_examples(args, task, tokenizer, evaluate=False):
     return dataset
 
 
-def aggregate_gradients(rank, model):
+def aggregate_gradients_gather_scatter(rank, model):
+    print('Rank {} node is gathering gradient...'.format(rank))
     # Placeholder to gather gradients
     gathered_gradients = [torch.zeros_like(param.grad) for param in model.parameters()]
     
@@ -304,7 +310,40 @@ def aggregate_gradients(rank, model):
 
     # Scatter the averaged gradients back to all processes
     for param, gathered_grad in zip(model.parameters(), gathered_gradients):
+        print('Rank {} node is scattering gradient'.format(rank))
         dist.scatter(param.grad.data, scatter_list=[gathered_grad] * dist.get_world_size(), src=0)
+
+def gather_gradients(params):
+    """
+    Gather gradients from all processes and return the mean gradients on rank 0.
+    Each process should call this function.
+    """
+    world_size = dist.get_world_size()
+    for param in params:
+        # All processes contribute their gradients for averaging
+        gathered_gradients = [torch.zeros_like(param.grad) for _ in range(world_size)]
+        dist.all_gather(gathered_gradients, param.grad)
+        
+        # Only rank 0 will average the gradients
+        if dist.get_rank() == 0:
+            mean_grad = torch.mean(torch.stack(gathered_gradients), dim=0)
+            param.grad = mean_grad
+
+def scatter_gradients(params):
+    """
+    Scatter the mean gradients from rank 0 to all processes.
+    """
+    for param in params:
+        # Broadcast the mean gradient from rank 0 to all processes
+        dist.broadcast(param.grad, src=0)
+
+def synchronize_gradients(model):
+    """
+    Perform gradient synchronization (gather and scatter) across all workers.
+    """
+    gather_gradients(model.parameters())
+    if dist.get_rank() == 0:
+        scatter_gradients(model.parameters())
 
 def cleanup():
     print('cleanup')
@@ -381,7 +420,7 @@ def main():
     parser.add_argument('--fp16_opt_level', type=str, default='O1',
                         help="For fp16: Apex AMP optimization level selected in ['O0', 'O1', 'O2', and 'O3']."
                              "See details at https://nvidia.github.io/apex/amp.html")
-    parser.add_argument("--local-rank", type=int, default=-1,
+    parser.add_argument("--local_rank", type=int, default=-1,
                         help="For distributed training: local_rank. If single-node training, local_rank defaults to -1.")
     args = parser.parse_args()
 
