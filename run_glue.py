@@ -30,6 +30,8 @@ from torch.utils.data import (DataLoader, RandomSampler, SequentialSampler,
                               TensorDataset)
 from torch.utils.data.distributed import DistributedSampler
 import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
+
 from tqdm import tqdm, trange
 
 # import a previous version of the HuggingFace Transformers package
@@ -172,7 +174,7 @@ def train(args, train_dataset, model, tokenizer):
 
             #print('Params before: ', model.parameters())
             #aggregate_gradients_gather_scatter(rank, model)
-            aggregate_gradients_allreduce(rank, model)
+            #aggregate_gradients_allreduce(rank, model)
             #print('Params after: ', model.parameters())
 
             if (step + 1) % args.gradient_accumulation_steps == 0:
@@ -483,14 +485,16 @@ def main():
         torch.distributed.barrier()  # Make sure only the first process in distributed training will download model & vocab
 
     model.to(args.device)
-
+    
+    ddp_model = DDP(model, device_ids=[rank])
+    
     logger.info("Training/evaluation parameters %s", args)
 
 
     # Training
     if args.do_train:
         train_dataset = load_and_cache_examples(args, args.task_name, tokenizer, evaluate=False)
-        global_step, tr_loss = train(args, train_dataset, model, tokenizer)
+        global_step, tr_loss = train(args, train_dataset, ddp_model, tokenizer)
         logger.info(" global_step = %s, average loss = %s", global_step, tr_loss)
 
     # Evaluation
