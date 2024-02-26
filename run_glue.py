@@ -69,7 +69,8 @@ def set_seed(args):
 
 def setup(rank, world_size):
     # Initialize the process group
-    dist.init_process_group("gloo", rank=rank, world_size=world_size) # Use "nccl" for GPU
+    dist.init_process_group("gloo", init_method='tcp://10.10.1.1:6585',
+                            rank=rank, world_size=world_size) # Use "nccl" for GPU
 
 # Example initialization
 # setup(rank=my_rank, world_size=4) # my_rank is the rank of the current process

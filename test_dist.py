@@ -17,7 +17,8 @@ def setup(rank, world_size):
     print(type(rank), world_size)
     #os.environ['MASTER_ADDR'] = 'localhost'
     #os.environ['MASTER_PORT'] = '6008'
-    dist.init_process_group("gloo", rank=rank, world_size=world_size)
+    dist.init_process_group("gloo", init_method='tcp://10.10.1.1:6585',
+                            rank=rank, world_size=world_size)
 
 def cleanup():
     print('cleanup')
